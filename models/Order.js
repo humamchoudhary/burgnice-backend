@@ -25,11 +25,14 @@ const orderSchema = new mongoose.Schema({
     user: { 
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: false  // Changed to false for guest orders
+        required: false
     },
     customerName: { type: String, required: true },
     contactPhone: { type: String, required: true },
     orderItems: [orderItemSchema],
+    subtotal: { type: Number, required: true }, // Added subtotal
+    discountAmount: { type: Number, default: 0 }, // Added discount from loyalty points
+    loyaltyPointsUsed: { type: Number, default: 0 }, // Added points used
     total: { type: Number, required: true },
     status: {
         type: String,
