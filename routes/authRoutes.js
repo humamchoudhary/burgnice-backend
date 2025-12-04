@@ -9,6 +9,9 @@ router.post('/register', authController.register);
 // POST /api/auth/login - Login user
 router.post('/login', authController.login);
 
+// POST /api/auth/sync-cart - Sync session cart to database (optional)
+router.post('/sync-cart', authMiddleware.required, authController.syncCart);
+
 // POST /api/auth/logout - Logout user
 router.post('/logout', authMiddleware.required, authController.logout);
 

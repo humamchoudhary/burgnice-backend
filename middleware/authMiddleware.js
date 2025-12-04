@@ -28,7 +28,6 @@ const verifyAndSetUser = (token) => {
 const authMiddleware = {
   // Required authentication
   required: (req, res, next) => {
-    // console.log("req", req);
     const token = extractToken(req);
 
     if (!token) {
@@ -46,42 +45,22 @@ const authMiddleware = {
     next();
   },
 
-  // Optional authentication
+  // Optional authentication - SIMPLIFIED VERSION
   optional: (req, res, next) => {
     const token = extractToken(req);
-    console.log("Token:", token);
-
+    
     if (token) {
       const decoded = verifyAndSetUser(token);
-      console.log("Decoded user:", decoded);
-      req.user = decoded;
+      if (decoded) {
+        req.user = decoded;
+      } else {
+        req.user = null;
+      }
     } else {
       req.user = null;
     }
-
-    // Create a wrapper function to log what next() calls
-    const originalNext = next;
-    const patchedNext = (...args) => {
-      console.log("=== NEXT() CALLED ===");
-      console.log("Current route:", req.originalUrl);
-      console.log("Current method:", req.method);
-      console.log("Middleware stack position: next() called");
-
-      // Get the function that will be called next
-      const currentRoute = req.route;
-
-      if (currentRoute) {
-        console.log("Current route path:", currentRoute.path);
-        console.log("Current route stack length:", currentRoute.stack.length);
-      }
-
-      // Log the middleware/controller that will be executed next
-      // console.log("Stack length:", stack.length);
-
-      originalNext(...args);
-    };
-
-    patchedNext();
+    
+    next();
   },
 
   // Admin only middleware
@@ -93,7 +72,32 @@ const authMiddleware = {
     if (req.user.role === "admin") {
       next();
     } else {
-      res.status(403).json({
+      return res.status(403).json({
+        message: "Access denied. Admin privileges required.",
+      });
+    }
+  },
+
+  // Combined auth and admin check
+  adminRequired: (req, res, next) => {
+    // Check authentication first
+    const token = extractToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "No token, authorization denied" });
+    }
+
+    const decoded = verifyAndSetUser(token);
+    if (!decoded) {
+      return res.status(401).json({ message: "Token is not valid" });
+    }
+
+    req.user = decoded;
+
+    // Then check admin role
+    if (req.user.role === "admin") {
+      next();
+    } else {
+      return res.status(403).json({
         message: "Access denied. Admin privileges required.",
       });
     }

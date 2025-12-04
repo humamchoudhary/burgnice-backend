@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const cartController = require('../controllers/cartController');
-const authMiddleware = require('../middleware/authMiddleware');
-
+const auth = require('../middleware/authMiddleware');
+console.log('Cart controller methods:', Object.keys(cartController));
 // Check if method exists, otherwise use placeholder
 const getHandler = (methodName) => {
     if (cartController[methodName] && typeof cartController[methodName] === 'function') {
@@ -15,24 +15,35 @@ const getHandler = (methodName) => {
 };
 
 // GET /api/cart - Get cart
-router.get('/', authMiddleware.optional, getHandler('getCart'));
+router.get('/', auth.optional, getHandler('getCart'));
 
 // POST /api/cart/add - Add to cart
-router.post('/add', authMiddleware.optional, getHandler('addToCart'));
+router.post('/add', auth.optional, getHandler('addToCart'));
 
 // PUT /api/cart/update - Update cart item
-router.put('/update', authMiddleware.optional, getHandler('updateCartItem'));
+router.put('/update', auth.optional, getHandler('updateCartItem'));
+
+// DELETE /api/cart/remove/:cartItemId - Remove item from cart
+router.delete('/remove/:cartItemId', auth.optional, getHandler('removeFromCart'));
 
 // DELETE /api/cart/clear - Clear cart
-router.delete('/clear', authMiddleware.optional, getHandler('clearCart'));
+router.delete('/clear', auth.optional, getHandler('clearCart'));
 
 // POST /api/cart/transfer - Transfer guest cart
-router.post('/transfer', authMiddleware.required, getHandler('transferGuestCart'));
+router.post('/transfer', auth.required, getHandler('transferGuestCart'));
 
-// DELETE /api/cart/:itemId - Remove item from cart (if method exists)
-router.delete('/:itemId', authMiddleware.optional, getHandler('removeFromCart'));
+// GET /api/cart/count - Get cart count
+router.get('/count', auth.optional, getHandler('getCartCount'));
 
-// GET /api/cart/count - Get cart count (if method exists)
-router.get('/count', authMiddleware.optional, getHandler('getCartCount'));
+// POST /api/cart/sync - Sync cart (new route from your changes)
+router.post('/sync', auth.required, getHandler('syncCart'));
+
+// DELETE /api/cart/:itemId - Legacy route (keep for backward compatibility)
+router.delete('/:itemId', auth.optional, (req, res) => {
+    res.status(410).json({
+        message: 'This endpoint is deprecated. Use /remove/:cartItemId instead',
+        newEndpoint: `/api/cart/remove/${req.params.itemId}`
+    });
+});
 
 module.exports = router;
