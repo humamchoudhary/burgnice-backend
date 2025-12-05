@@ -106,6 +106,25 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
+userSchema.methods.changePassword = async function(newPassword) {
+  // Password validation
+  if (newPassword.length < 8) {
+    throw new Error('Password must be at least 8 characters long');
+  }
+  
+  // Additional password strength validation
+  const hasUpperCase = /[A-Z]/.test(newPassword);
+  const hasLowerCase = /[a-z]/.test(newPassword);
+  const hasNumbers = /\d/.test(newPassword);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
+  
+  if (!(hasUpperCase && hasLowerCase && hasNumbers && hasSpecialChar)) {
+    throw new Error('Password must contain uppercase, lowercase, number, and special character');
+  }
+  
+  this.password = newPassword;
+  return await this.save();
+};
 // Method to apply loyalty discount
 userSchema.methods.applyLoyaltyDiscount = function(orderTotal) {
   if (this.loyaltyPoints < 10 || orderTotal < 10) {

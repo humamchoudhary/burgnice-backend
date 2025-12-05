@@ -21,6 +21,8 @@ router.get('/profile', authMiddleware.required, authController.getProfile);
 // PUT /api/auth/profile - Update user profile
 router.put('/profile', authMiddleware.required, authController.updateProfile);
 
+router.put('/change-password', authMiddleware.required, authController.changePassword);
+
 // POST /api/auth/refresh-token - Refresh access token
 router.post('/refresh-token', authController.refreshToken);
 

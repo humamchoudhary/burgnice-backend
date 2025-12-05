@@ -145,12 +145,53 @@ exports.logout = async (req, res) => {
   }
 };
 
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "Current and new password are required" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Verify current password
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    // Validate new password
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters long" });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    res.json({ message: "Password changed successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // Get user profile with cart
 exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
       .populate("cart.menuItem", "name price image category")
-      .populate("cart.menuItem.category", "name");
+      .populate("cart.menuItem.category", "name")
+      .populate({
+        path: 'orderHistory.order',
+        populate: {
+          path: 'orderItems.menuItem',
+          select: 'name price image'
+        }
+      });
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -165,6 +206,9 @@ exports.getProfile = async (req, res) => {
       total: item.menuItem ? item.menuItem.price * item.quantity : 0,
     }));
 
+    // Calculate total orders
+    const totalOrders = user.orderHistory.length;
+
     res.json({
       user: {
         id: user._id,
@@ -175,10 +219,22 @@ exports.getProfile = async (req, res) => {
         totalSpent: user.totalSpent,
         loyaltyPointsUsed: user.loyaltyPointsUsed,
         createdAt: user.createdAt,
+        shippingAddress: user.shippingAddress,
+        phoneNumber: user.phoneNumber,
+        preferences: user.preferences,
+        totalOrders: totalOrders,
+        joinDate: user.createdAt,
+        tier: user.loyaltyPoints > 1000 ? "Gold" : user.loyaltyPoints > 500 ? "Silver" : "Bronze"
       },
       cart: cartItems,
       cartCount: cartItems.reduce((sum, item) => sum + item.quantity, 0),
       loyaltyPoints: user.loyaltyPoints,
+      recentOrders: user.orderHistory.slice(0, 5).map(item => ({
+        orderId: item.order._id,
+        total: item.order.total,
+        status: item.order.status,
+        date: item.order.createdAt
+      }))
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

@@ -30,6 +30,8 @@ app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/cart", require("./routes/cartRoutes"));
 
+const userRoutes = require('./routes/userRoutes');
+app.use('/api/user', userRoutes);
 // Remove or comment out the old route imports
 app.use("/api", require("./routes/menuRoutes"));
 // app.use('/api', orderRoutes);
