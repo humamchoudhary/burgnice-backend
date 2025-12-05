@@ -31,7 +31,7 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/cart", require("./routes/cartRoutes"));
 
 // Remove or comment out the old route imports
-// app.use('/api', menuRoutes);
+app.use("/api", require("./routes/menuRoutes"));
 // app.use('/api', orderRoutes);
 // app.use('/api', authRoutes);
 
