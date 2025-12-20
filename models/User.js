@@ -61,13 +61,14 @@ const userSchema = new mongoose.Schema({
   orderHistory: [{
     order: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Order"
+      ref: 'Order'
     },
     addedAt: {
       type: Date,
       default: Date.now
     }
   }],
+  
   createdAt: {
     type: Date,
     default: Date.now,
@@ -149,11 +150,11 @@ userSchema.methods.applyLoyaltyDiscount = function(orderTotal) {
 
 // Method to add order to history
 userSchema.methods.addToOrderHistory = async function(orderId) {
-  if (!this.orderHistory.some(item => item.order.toString() === orderId.toString())) {
-    this.orderHistory.push({
-      order: orderId,
-      addedAt: new Date()
-    });
+  this.orderHistory.push({
+    order: orderId,
+    addedAt: new Date()
+  });
+
     
     // Keep only last 50 orders
     if (this.orderHistory.length > 50) {
@@ -161,8 +162,7 @@ userSchema.methods.addToOrderHistory = async function(orderId) {
     }
     
     await this.save();
-  }
-};
+  };
 
 // Method to add item to cart
 userSchema.methods.addToCart = async function(menuItemId, quantity = 1, customizations = {}) {

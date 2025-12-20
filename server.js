@@ -20,10 +20,9 @@ app.use(express.json());
 
 app.use(requestLogger);
 
-// Serve uploaded files statically
 app.use("/uploads", express.static("uploads"));
 
-// Use the new route files
+
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/menu-items", require("./routes/menuItemRoutes"));
 app.use("/api/orders", require("./routes/orderRoutes"));
@@ -32,7 +31,6 @@ app.use("/api/cart", require("./routes/cartRoutes"));
 
 const userRoutes = require('./routes/userRoutes');
 app.use('/api/user', userRoutes);
-// Remove or comment out the old route imports
 app.use("/api", require("./routes/menuRoutes"));
 // app.use('/api', orderRoutes);
 // app.use('/api', authRoutes);

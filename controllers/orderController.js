@@ -6,6 +6,7 @@ const MenuItem = require("../models/MenuItem");
 exports.createOrder = async (req, res) => {
   try {
     console.log("Creating order with body:", req.body);
+    console.log("User ID from request:", req.user?.id);
     
     const {
       orderItems,
@@ -23,7 +24,7 @@ exports.createOrder = async (req, res) => {
 
     // Create order object
     const orderData = {
-      user: req.user ? req.user.id : null,
+      user: req.user ? req.user.id : null,  
       orderItems,
       subtotal,
       discountAmount,
@@ -37,8 +38,12 @@ exports.createOrder = async (req, res) => {
       status: "pending"
     };
 
+    console.log("Order data being saved:", orderData);
+
     const order = new Order(orderData);
     await order.save();
+
+    console.log("Order saved with ID:", order._id, "for user:", order.user);
 
     let userData = null;
     let pointsEarned = loyaltyPointsEarned || 0;
@@ -78,11 +83,10 @@ exports.createOrder = async (req, res) => {
       user.cart = [];
       user.lastCartUpdate = new Date();
       
-      // Add order to user's order history
-      await user.addToOrderHistory(order._id);
-      
       await user.save();
       await order.save();
+
+      console.log("User updated - Loyalty points:", user.loyaltyPoints, "Total spent:", user.totalSpent);
 
       return res.status(201).json({
         message: "Order created successfully",
@@ -112,30 +116,46 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// Get user's order history with tracking
+// Get user's order history with tracking - MAIN FUNCTION
 exports.getUserOrderHistory = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const user = await User.findById(req.user.id)
-      .populate({
-        path: 'orderHistory.order',
-        populate: {
-          path: 'orderItems.menuItem',
-          select: 'name price image'
-        }
-      })
-      .sort({ 'orderHistory.addedAt': -1 });
+    console.log("🔄 Fetching order history for user ID:", req.user.id);
 
+    // Fetch ONLY orders that belong to this specific user
+    const orders = await Order.find({ user: req.user.id })
+      .populate({
+        path: 'orderItems.menuItem',
+        select: 'name price image'
+      })
+      .sort({ createdAt: -1 });
+
+    console.log(`✅ Found ${orders.length} orders for user ${req.user.id}`);
+    
+    // Log each order found
+    orders.forEach((order, index) => {
+      console.log(`  Order ${index + 1}:`, {
+        id: order._id,
+        user: order.user,
+        status: order.status,
+        total: order.total,
+        createdAt: order.createdAt,
+        itemCount: order.orderItems.length
+      });
+    });
+
+    // Get user details for loyalty points and total spent
+    const user = await User.findById(req.user.id);
+    
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Format response with order tracking
-    const orderHistory = user.orderHistory.map(item => {
-      const order = item.order;
+    // Format response - only if there are actual orders
+    const orderHistory = orders.map(order => {
       return {
         _id: order._id,
         orderNumber: order._id.toString().slice(-8).toUpperCase(),
@@ -153,23 +173,26 @@ exports.getUserOrderHistory = async (req, res) => {
         customerName: order.customerName,
         createdAt: order.createdAt,
         estimatedDelivery: getEstimatedDelivery(order.createdAt, order.status),
-        discountApplied: order.discountAmount,
-        loyaltyPointsEarned: order.loyaltyPointsEarned,
-        loyaltyPointsUsed: order.loyaltyPointsUsed,
+        discountApplied: order.discountAmount || 0,
+        loyaltyPointsEarned: order.loyaltyPointsEarned || 0,
+        loyaltyPointsUsed: order.loyaltyPointsUsed || 0,
         paymentMethod: order.paymentMethod,
-        notes: order.notes
+        notes: order.notes || ''
       };
     });
 
-    res.json({
+    const response = {
       orders: orderHistory,
-      totalOrders: orderHistory.length,
-      totalSpent: user.totalSpent,
-      loyaltyPoints: user.loyaltyPoints,
-      recentOrder: orderHistory.length > 0 ? orderHistory[0] : null
-    });
+      totalOrders: orders.length,
+      totalSpent: user.totalSpent || 0,
+      loyaltyPoints: user.loyaltyPoints || 0,
+      recentOrder: orders.length > 0 ? orderHistory[0] : null
+    };
+
+    console.log("📤 Sending response with", orders.length, "orders");
+    res.json(response);
   } catch (error) {
-    console.error("Error fetching order history:", error);
+    console.error("❌ Error fetching order history:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -236,7 +259,7 @@ exports.getOrderTracking = async (req, res) => {
   }
 };
 
-// Get all orders (admin only) - Keep existing
+// Get all orders (admin only)
 exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
@@ -248,7 +271,7 @@ exports.getAllOrders = async (req, res) => {
   }
 };
 
-// Get paginated orders (admin only) - Keep existing
+// Get paginated orders (admin only)
 exports.getPaginatedOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -275,7 +298,7 @@ exports.getPaginatedOrders = async (req, res) => {
   }
 };
 
-// Get order by ID - Keep existing (but now we also have getOrderDetails)
+// Get order by ID
 exports.getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
@@ -297,12 +320,15 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
-// Get user orders with loyalty points summary - Keep existing
+// REMOVE or RENAME this duplicate function - it conflicts with getUserOrderHistory
+// Get user orders with loyalty points summary - SIMPLER VERSION
 exports.getUserOrders = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "Authentication required" });
     }
+
+    console.log("⚠️ Using getUserOrders (legacy) for user:", req.user.id);
 
     const orders = await Order.find({ user: req.user.id })
       .sort({ createdAt: -1 })
@@ -321,7 +347,7 @@ exports.getUserOrders = async (req, res) => {
   }
 };
 
-// Update order (admin only) - Keep existing
+// Update order (admin only)
 exports.updateOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(req.params.id, req.body, {
@@ -340,7 +366,7 @@ exports.updateOrder = async (req, res) => {
   }
 };
 
-// Delete order (admin only) - Keep existing
+// Delete order (admin only)
 exports.deleteOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id);
@@ -365,7 +391,7 @@ exports.deleteOrder = async (req, res) => {
   }
 };
 
-// Update order status (admin only) - Keep existing
+// Update order status (admin only)
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
@@ -405,7 +431,7 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
-// Cancel order - Keep existing
+// Cancel order
 exports.cancelOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -444,7 +470,7 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
-// Get order statistics (admin only) - Keep existing
+// Get order statistics (admin only)
 exports.getOrderStats = async (req, res) => {
   try {
     const today = new Date();
@@ -487,7 +513,7 @@ exports.getOrderStats = async (req, res) => {
   }
 };
 
-// Get loyalty points summary - Keep existing
+// Get loyalty points summary
 exports.getLoyaltySummary = async (req, res) => {
   console.log("Getting loyalty summary for user:", req.user?.id);
   try {
@@ -528,7 +554,7 @@ exports.getLoyaltySummary = async (req, res) => {
   }
 };
 
-// Calculate loyalty discount - Keep existing
+// Calculate loyalty discount
 exports.calculateLoyaltyDiscount = async (req, res) => {
   try {
     if (!req.user) {
