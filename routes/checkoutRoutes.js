@@ -8,6 +8,7 @@ try {
   checkoutController = require("../controllers/checkoutController");
 } catch (error) {
   console.warn("checkoutController not found, using placeholder functions");
+  console.log(error);
   checkoutController = {};
   // Add placeholder functions for all methods
   const placeholder = (req, res) =>
@@ -23,12 +24,6 @@ try {
     checkoutController[method] = placeholder;
   });
 }
-
-router.post(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  checkoutController.handleWebhook,
-);
 
 router.post("/create-session", auth.required, checkoutController.createSession);
 router.get("/status", auth.required, checkoutController.checkStatus);
