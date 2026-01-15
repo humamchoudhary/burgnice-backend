@@ -2,11 +2,11 @@ const Order = require("../models/Order");
 const User = require("../models/User");
 const MenuItem = require("../models/MenuItem");
 
-// Create new order with cart clearing and order history
+// Create new order with cart clearing
 exports.createOrder = async (req, res) => {
   try {
     console.log("Creating order with body:", req.body);
-    
+
     const {
       orderItems,
       subtotal,
@@ -18,7 +18,7 @@ exports.createOrder = async (req, res) => {
       notes,
       contactPhone,
       customerName,
-      loyaltyPointsEarned = 0
+      loyaltyPointsEarned = 0,
     } = req.body;
 
     // Create order object
@@ -34,11 +34,10 @@ exports.createOrder = async (req, res) => {
       customerName,
       paymentMethod,
       notes,
-      status: "pending"
+      status: "pending",
     };
 
     const order = new Order(orderData);
-    await order.save();
 
     let userData = null;
     let pointsEarned = loyaltyPointsEarned || 0;
@@ -55,32 +54,30 @@ exports.createOrder = async (req, res) => {
       // Calculate points earned if not provided
       if (!loyaltyPointsEarned) {
         pointsEarned = Math.floor(subtotal / 10);
-        order.loyaltyPointsEarned = pointsEarned;
       }
+      order.loyaltyPointsEarned = pointsEarned;
 
       // Deduct loyalty points used for discount
       if (loyaltyPointsUsed > 0) {
         if (user.loyaltyPoints < loyaltyPointsUsed) {
-          return res.status(400).json({ 
-            message: "Insufficient loyalty points" 
+          return res.status(400).json({
+            message: "Insufficient loyalty points",
           });
         }
-        
+
         user.loyaltyPoints -= loyaltyPointsUsed;
-        user.loyaltyPointsUsed = (user.loyaltyPointsUsed || 0) + loyaltyPointsUsed;
+        user.loyaltyPointsUsed =
+          (user.loyaltyPointsUsed || 0) + loyaltyPointsUsed;
       }
 
       // Add earned points
       user.loyaltyPoints += pointsEarned;
       user.totalSpent += total;
-      
+
       // Clear user's cart after successful order
       user.cart = [];
       user.lastCartUpdate = new Date();
-      
-      // Add order to user's order history
-      await user.addToOrderHistory(order._id);
-      
+
       await user.save();
       await order.save();
 
@@ -95,8 +92,8 @@ exports.createOrder = async (req, res) => {
         user: {
           id: user._id,
           username: user.username,
-          loyaltyPoints: user.loyaltyPoints
-        }
+          loyaltyPoints: user.loyaltyPoints,
+        },
       });
     }
 
@@ -112,61 +109,57 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// Get user's order history with tracking
+// Get user's order history - OPTIMIZED
 exports.getUserOrderHistory = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const user = await User.findById(req.user.id)
-      .populate({
-        path: 'orderHistory.order',
-        populate: {
-          path: 'orderItems.menuItem',
-          select: 'name price image'
-        }
-      })
-      .sort({ 'orderHistory.addedAt': -1 });
+    // Fetch user and orders in parallel
+    const [user, orders] = await Promise.all([
+      User.findById(req.user.id).select("loyaltyPoints totalSpent").lean(),
+      Order.find({ user: req.user.id })
+        .populate("orderItems.menuItem", "name price image")
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     // Format response with order tracking
-    const orderHistory = user.orderHistory.map(item => {
-      const order = item.order;
-      return {
-        _id: order._id,
-        orderNumber: order._id.toString().slice(-8).toUpperCase(),
-        total: order.total,
-        status: order.status,
-        statusText: getStatusText(order.status),
-        items: order.orderItems.map(oi => ({
-          name: oi.menuItem?.name || 'Item',
-          quantity: oi.quantity,
-          price: oi.price
-        })),
-        itemCount: order.orderItems.reduce((sum, item) => sum + item.quantity, 0),
-        deliveryAddress: order.deliveryAddress,
-        contactPhone: order.contactPhone,
-        customerName: order.customerName,
-        createdAt: order.createdAt,
-        estimatedDelivery: getEstimatedDelivery(order.createdAt, order.status),
-        discountApplied: order.discountAmount,
-        loyaltyPointsEarned: order.loyaltyPointsEarned,
-        loyaltyPointsUsed: order.loyaltyPointsUsed,
-        paymentMethod: order.paymentMethod,
-        notes: order.notes
-      };
-    });
+    const orderHistory = orders.map((order) => ({
+      _id: order._id,
+      orderNumber: order._id.toString().slice(-8).toUpperCase(),
+      total: order.total,
+      status: order.status,
+      statusText: getStatusText(order.status),
+      items: order.orderItems.map((oi) => ({
+        name: oi.menuItem?.name || "Item",
+        quantity: oi.quantity,
+        price: oi.price,
+      })),
+      itemCount: order.orderItems.reduce((sum, item) => sum + item.quantity, 0),
+      deliveryAddress: order.deliveryAddress,
+      contactPhone: order.contactPhone,
+      customerName: order.customerName,
+      createdAt: order.createdAt,
+      estimatedDelivery: getEstimatedDelivery(order.createdAt, order.status),
+      discountApplied: order.discountAmount,
+      loyaltyPointsEarned: order.loyaltyPointsEarned,
+      loyaltyPointsUsed: order.loyaltyPointsUsed,
+      paymentMethod: order.paymentMethod,
+      notes: order.notes,
+    }));
 
     res.json({
       orders: orderHistory,
       totalOrders: orderHistory.length,
       totalSpent: user.totalSpent,
       loyaltyPoints: user.loyaltyPoints,
-      recentOrder: orderHistory.length > 0 ? orderHistory[0] : null
+      recentOrder: orderHistory.length > 0 ? orderHistory[0] : null,
     });
   } catch (error) {
     console.error("Error fetching order history:", error);
@@ -174,53 +167,64 @@ exports.getUserOrderHistory = async (req, res) => {
   }
 };
 
-// Get order details with tracking information
+// Get order details with tracking information - OPTIMIZED
 exports.getOrderDetails = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate('orderItems.menuItem', 'name price image category')
-      .populate('user', 'username email');
+      .populate("orderItems.menuItem", "name price image category")
+      .populate("user", "username email")
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
     // Check authorization
-    if (req.user && req.user.role !== "admin" && order.user.toString() !== req.user.id) {
+    if (
+      req.user &&
+      req.user.role !== "admin" &&
+      order.user?._id.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
     // Get tracking information
     const trackingInfo = getOrderTrackingInfo(order);
-    
+
     res.json({
       order: {
-        ...order.toObject(),
+        ...order,
         orderNumber: order._id.toString().slice(-8).toUpperCase(),
-        trackingInfo
-      }
+        trackingInfo,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Get order tracking status
+// Get order tracking status - OPTIMIZED
 exports.getOrderTracking = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id)
+      .select("status createdAt updatedAt user")
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
     // Check authorization
-    if (req.user && req.user.role !== "admin" && order.user.toString() !== req.user.id) {
+    if (
+      req.user &&
+      req.user.role !== "admin" &&
+      order.user?.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
     const trackingInfo = getOrderTrackingInfo(order);
-    
+
     res.json({
       orderId: order._id,
       orderNumber: order._id.toString().slice(-8).toUpperCase(),
@@ -229,38 +233,42 @@ exports.getOrderTracking = async (req, res) => {
       trackingInfo,
       estimatedDelivery: getEstimatedDelivery(order.createdAt, order.status),
       createdAt: order.createdAt,
-      updatedAt: order.updatedAt
+      updatedAt: order.updatedAt,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Get all orders (admin only) - Keep existing
+// Get all orders (admin only) - OPTIMIZED
 exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
-      .populate("orderItems.menuItem")
-      .sort({ createdAt: -1 });
+      .populate("orderItems.menuItem", "name price image")
+      .sort({ createdAt: -1 })
+      .lean();
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Get paginated orders (admin only) - Keep existing
+// Get paginated orders (admin only) - OPTIMIZED
 exports.getPaginatedOrders = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const total = await Order.countDocuments();
-    const orders = await Order.find()
-      .populate("orderItems.menuItem")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const [total, orders] = await Promise.all([
+      Order.countDocuments(),
+      Order.find()
+        .populate("orderItems.menuItem", "name price image")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+    ]);
 
     res.json({
       data: orders,
@@ -275,19 +283,24 @@ exports.getPaginatedOrders = async (req, res) => {
   }
 };
 
-// Get order by ID - Keep existing (but now we also have getOrderDetails)
+// Get order by ID - OPTIMIZED
 exports.getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .populate("orderItems.menuItem")
-      .populate("user", "username email");
+      .populate("user", "username email")
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
 
     // Check if user is authorized
-    if (req.user && req.user.role !== "admin" && order.user.toString() !== req.user.id) {
+    if (
+      req.user &&
+      req.user.role !== "admin" &&
+      order.user?._id.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
@@ -297,18 +310,22 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
-// Get user orders with loyalty points summary - Keep existing
+// Get user orders with loyalty points summary - OPTIMIZED
 exports.getUserOrders = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const orders = await Order.find({ user: req.user.id })
-      .sort({ createdAt: -1 })
-      .populate("orderItems.menuItem");
-
-    const user = await User.findById(req.user.id);
+    const [orders, user] = await Promise.all([
+      Order.find({ user: req.user.id })
+        .sort({ createdAt: -1 })
+        .populate("orderItems.menuItem", "name price image")
+        .lean(),
+      User.findById(req.user.id)
+        .select("loyaltyPoints loyaltyPointsUsed totalSpent")
+        .lean(),
+    ]);
 
     res.json({
       orders,
@@ -321,14 +338,14 @@ exports.getUserOrders = async (req, res) => {
   }
 };
 
-// Update order (admin only) - Keep existing
+// Update order (admin only)
 exports.updateOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
     })
-    .populate("orderItems.menuItem")
-    .populate("user", "username email");
+      .populate("orderItems.menuItem")
+      .populate("user", "username email");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -340,7 +357,7 @@ exports.updateOrder = async (req, res) => {
   }
 };
 
-// Delete order (admin only) - Keep existing
+// Delete order (admin only)
 exports.deleteOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id);
@@ -351,12 +368,12 @@ exports.deleteOrder = async (req, res) => {
 
     // If order had loyalty points used, restore them
     if (order.user && order.loyaltyPointsUsed > 0) {
-      const user = await User.findById(order.user);
-      if (user) {
-        user.loyaltyPoints += order.loyaltyPointsUsed;
-        user.totalSpent -= order.total;
-        await user.save();
-      }
+      await User.findByIdAndUpdate(order.user, {
+        $inc: {
+          loyaltyPoints: order.loyaltyPointsUsed,
+          totalSpent: -order.total,
+        },
+      });
     }
 
     res.json({ message: "Order deleted successfully" });
@@ -365,7 +382,7 @@ exports.deleteOrder = async (req, res) => {
   }
 };
 
-// Update order status (admin only) - Keep existing
+// Update order status (admin only)
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
@@ -383,8 +400,8 @@ exports.updateOrderStatus = async (req, res) => {
       { status },
       { new: true },
     )
-    .populate("orderItems.menuItem")
-    .populate("user", "username email");
+      .populate("orderItems.menuItem")
+      .populate("user", "username email");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -392,11 +409,9 @@ exports.updateOrderStatus = async (req, res) => {
 
     // If order is cancelled and loyalty points were used, restore them
     if (status === "cancelled" && order.user && order.loyaltyPointsUsed > 0) {
-      const user = await User.findById(order.user);
-      if (user) {
-        user.loyaltyPoints += order.loyaltyPointsUsed;
-        await user.save();
-      }
+      await User.findByIdAndUpdate(order.user._id, {
+        $inc: { loyaltyPoints: order.loyaltyPointsUsed },
+      });
     }
 
     res.json(order);
@@ -405,7 +420,7 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
-// Cancel order - Keep existing
+// Cancel order
 exports.cancelOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -415,7 +430,11 @@ exports.cancelOrder = async (req, res) => {
     }
 
     // Check authorization
-    if (req.user && req.user.role !== "admin" && order.user.toString() !== req.user.id) {
+    if (
+      req.user &&
+      req.user.role !== "admin" &&
+      order.user?.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
@@ -431,11 +450,9 @@ exports.cancelOrder = async (req, res) => {
 
     // Restore loyalty points if used
     if (order.user && order.loyaltyPointsUsed > 0) {
-      const user = await User.findById(order.user);
-      if (user) {
-        user.loyaltyPoints += order.loyaltyPointsUsed;
-        await user.save();
-      }
+      await User.findByIdAndUpdate(order.user, {
+        $inc: { loyaltyPoints: order.loyaltyPointsUsed },
+      });
     }
 
     res.json(order);
@@ -444,7 +461,7 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
-// Get order statistics (admin only) - Keep existing
+// Get order statistics (admin only) - OPTIMIZED
 exports.getOrderStats = async (req, res) => {
   try {
     const today = new Date();
@@ -456,29 +473,68 @@ exports.getOrderStats = async (req, res) => {
     const monthAgo = new Date();
     monthAgo.setDate(monthAgo.getDate() - 30);
 
+    // Use aggregation pipeline for better performance
+    const [statusCounts, dateCounts, revenue] = await Promise.all([
+      Order.aggregate([
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      Order.aggregate([
+        {
+          $facet: {
+            today: [
+              { $match: { createdAt: { $gte: today } } },
+              { $count: "count" },
+            ],
+            week: [
+              { $match: { createdAt: { $gte: weekAgo } } },
+              { $count: "count" },
+            ],
+            month: [
+              { $match: { createdAt: { $gte: monthAgo } } },
+              { $count: "count" },
+            ],
+          },
+        },
+      ]),
+      Order.aggregate([
+        { $match: { status: "completed" } },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: "$total" },
+            totalDiscounts: { $sum: "$discountAmount" },
+            totalLoyaltyPointsUsed: { $sum: "$loyaltyPointsUsed" },
+          },
+        },
+      ]),
+    ]);
+
+    // Map status counts
+    const statusMap = statusCounts.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
     const stats = {
-      totalOrders: await Order.countDocuments(),
-      pendingOrders: await Order.countDocuments({ status: "pending" }),
-      preparingOrders: await Order.countDocuments({ status: "preparing" }),
-      completedOrders: await Order.countDocuments({ status: "completed" }),
-      cancelledOrders: await Order.countDocuments({ status: "cancelled" }),
-      todayOrders: await Order.countDocuments({ createdAt: { $gte: today } }),
-      weekOrders: await Order.countDocuments({ createdAt: { $gte: weekAgo } }),
-      monthOrders: await Order.countDocuments({
-        createdAt: { $gte: monthAgo },
-      }),
-      totalRevenue: await Order.aggregate([
-        { $match: { status: "completed" } },
-        { $group: { _id: null, total: { $sum: "$total" } } },
-      ]).then((result) => result[0]?.total || 0),
-      totalDiscounts: await Order.aggregate([
-        { $match: { status: "completed" } },
-        { $group: { _id: null, total: { $sum: "$discountAmount" } } },
-      ]).then((result) => result[0]?.total || 0),
-      totalLoyaltyPointsUsed: await Order.aggregate([
-        { $match: { status: "completed" } },
-        { $group: { _id: null, total: { $sum: "$loyaltyPointsUsed" } } },
-      ]).then((result) => result[0]?.total || 0),
+      totalOrders: Object.values(statusMap).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+      pendingOrders: statusMap.pending || 0,
+      preparingOrders: statusMap.preparing || 0,
+      completedOrders: statusMap.completed || 0,
+      cancelledOrders: statusMap.cancelled || 0,
+      todayOrders: dateCounts[0].today[0]?.count || 0,
+      weekOrders: dateCounts[0].week[0]?.count || 0,
+      monthOrders: dateCounts[0].month[0]?.count || 0,
+      totalRevenue: revenue[0]?.totalRevenue || 0,
+      totalDiscounts: revenue[0]?.totalDiscounts || 0,
+      totalLoyaltyPointsUsed: revenue[0]?.totalLoyaltyPointsUsed || 0,
     };
 
     res.json(stats);
@@ -487,7 +543,7 @@ exports.getOrderStats = async (req, res) => {
   }
 };
 
-// Get loyalty points summary - Keep existing
+// Get loyalty points summary - OPTIMIZED
 exports.getLoyaltySummary = async (req, res) => {
   console.log("Getting loyalty summary for user:", req.user?.id);
   try {
@@ -498,14 +554,23 @@ exports.getLoyaltySummary = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
-    const orders = await Order.find({
-      user: req.user.id,
-      $or: [
-        { loyaltyPointsEarned: { $gt: 0 } },
-        { loyaltyPointsUsed: { $gt: 0 } }
-      ]
-    }).sort({ createdAt: -1 });
+    const [user, orders] = await Promise.all([
+      User.findById(req.user.id)
+        .select("loyaltyPoints loyaltyPointsUsed totalSpent")
+        .lean(),
+      Order.find({
+        user: req.user.id,
+        $or: [
+          { loyaltyPointsEarned: { $gt: 0 } },
+          { loyaltyPointsUsed: { $gt: 0 } },
+        ],
+      })
+        .select(
+          "_id createdAt total loyaltyPointsEarned loyaltyPointsUsed discountAmount status",
+        )
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
 
     res.json({
       isLoggedIn: true,
@@ -519,7 +584,7 @@ exports.getLoyaltySummary = async (req, res) => {
         pointsEarned: order.loyaltyPointsEarned || 0,
         pointsUsed: order.loyaltyPointsUsed || 0,
         discountApplied: order.discountAmount || 0,
-        status: order.status
+        status: order.status,
       })),
     });
   } catch (error) {
@@ -528,7 +593,7 @@ exports.getLoyaltySummary = async (req, res) => {
   }
 };
 
-// Calculate loyalty discount - Keep existing
+// Calculate loyalty discount
 exports.calculateLoyaltyDiscount = async (req, res) => {
   try {
     if (!req.user) {
@@ -536,13 +601,15 @@ exports.calculateLoyaltyDiscount = async (req, res) => {
     }
 
     const { orderTotal } = req.body;
-    
+
     if (!orderTotal || orderTotal < 0) {
       return res.status(400).json({ message: "Valid order total required" });
     }
 
-    const user = await User.findById(req.user.id);
-    
+    const user = await User.findById(req.user.id)
+      .select("loyaltyPoints")
+      .lean();
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -551,25 +618,29 @@ exports.calculateLoyaltyDiscount = async (req, res) => {
     if (user.loyaltyPoints < 10 || orderTotal < 10) {
       return res.json({
         eligible: false,
-        message: user.loyaltyPoints < 10 ? 
-          "Minimum 10 loyalty points required" : 
-          "Minimum £10 order required for loyalty discount",
+        message:
+          user.loyaltyPoints < 10
+            ? "Minimum 10 loyalty points required"
+            : "Minimum £10 order required for loyalty discount",
         discountAmount: 0,
         pointsUsed: 0,
-        discountPercentage: 0
+        discountPercentage: 0,
       });
     }
 
     // Calculate discount
-    const discountInfo = user.applyLoyaltyDiscount(orderTotal);
-    
+    const maxStacks = Math.floor(user.loyaltyPoints / 10);
+    const discountPercentage = Math.min(maxStacks * 10, 50);
+    const discountAmount = (orderTotal * discountPercentage) / 100;
+    const pointsUsed = Math.floor(maxStacks * 10);
+
     res.json({
       eligible: true,
-      discountAmount: discountInfo.discountAmount,
-      pointsUsed: discountInfo.pointsUsed,
-      discountPercentage: discountInfo.discountPercentage,
-      finalTotal: orderTotal - discountInfo.discountAmount,
-      remainingPoints: user.loyaltyPoints - discountInfo.pointsUsed
+      discountAmount,
+      pointsUsed,
+      discountPercentage,
+      finalTotal: orderTotal - discountAmount,
+      remainingPoints: user.loyaltyPoints - pointsUsed,
     });
   } catch (error) {
     console.error("Error calculating discount:", error);
@@ -581,153 +652,155 @@ exports.calculateLoyaltyDiscount = async (req, res) => {
 function getOrderTrackingInfo(order) {
   const status = order.status;
   const createdAt = new Date(order.createdAt);
-  const now = new Date();
-  
+
   let timeline = [
     {
-      status: 'ordered',
-      title: 'Order Placed',
-      description: 'Your order has been received',
+      status: "ordered",
+      title: "Order Placed",
+      description: "Your order has been received",
       time: createdAt,
-      completed: true
-    }
+      completed: true,
+    },
   ];
 
-  if (status === 'pending') {
+  if (status === "pending") {
     timeline.push(
       {
-        status: 'confirmed',
-        title: 'Order Confirmed',
-        description: 'We are preparing your order',
-        time: new Date(createdAt.getTime() + 5 * 60000), // +5 minutes
-        completed: false
-      },
-      {
-        status: 'preparing',
-        title: 'In Preparation',
-        description: 'Your food is being prepared',
-        time: null,
-        completed: false
-      },
-      {
-        status: 'delivered',
-        title: 'Out for Delivery',
-        description: 'Your order is on the way',
-        time: null,
-        completed: false
-      }
-    );
-  } else if (status === 'preparing') {
-    const preparingTime = new Date(order.updatedAt || createdAt.getTime() + 10 * 60000);
-    timeline.push(
-      {
-        status: 'confirmed',
-        title: 'Order Confirmed',
-        description: 'We are preparing your order',
+        status: "confirmed",
+        title: "Order Confirmed",
+        description: "We are preparing your order",
         time: new Date(createdAt.getTime() + 5 * 60000),
-        completed: true
+        completed: false,
       },
       {
-        status: 'preparing',
-        title: 'In Preparation',
-        description: 'Your food is being prepared',
-        time: preparingTime,
-        completed: true
-      },
-      {
-        status: 'delivered',
-        title: 'Out for Delivery',
-        description: 'Your order is on the way',
+        status: "preparing",
+        title: "In Preparation",
+        description: "Your food is being prepared",
         time: null,
-        completed: false
-      }
+        completed: false,
+      },
+      {
+        status: "delivered",
+        title: "Out for Delivery",
+        description: "Your order is on the way",
+        time: null,
+        completed: false,
+      },
     );
-  } else if (status === 'completed') {
+  } else if (status === "preparing") {
+    const preparingTime = new Date(
+      order.updatedAt || createdAt.getTime() + 10 * 60000,
+    );
+    timeline.push(
+      {
+        status: "confirmed",
+        title: "Order Confirmed",
+        description: "We are preparing your order",
+        time: new Date(createdAt.getTime() + 5 * 60000),
+        completed: true,
+      },
+      {
+        status: "preparing",
+        title: "In Preparation",
+        description: "Your food is being prepared",
+        time: preparingTime,
+        completed: true,
+      },
+      {
+        status: "delivered",
+        title: "Out for Delivery",
+        description: "Your order is on the way",
+        time: null,
+        completed: false,
+      },
+    );
+  } else if (status === "completed") {
     const completedTime = new Date(order.updatedAt);
     timeline.push(
       {
-        status: 'confirmed',
-        title: 'Order Confirmed',
-        description: 'We are preparing your order',
+        status: "confirmed",
+        title: "Order Confirmed",
+        description: "We are preparing your order",
         time: new Date(createdAt.getTime() + 5 * 60000),
-        completed: true
+        completed: true,
       },
       {
-        status: 'preparing',
-        title: 'In Preparation',
-        description: 'Your food is being prepared',
+        status: "preparing",
+        title: "In Preparation",
+        description: "Your food is being prepared",
         time: new Date(createdAt.getTime() + 15 * 60000),
-        completed: true
+        completed: true,
       },
       {
-        status: 'delivered',
-        title: 'Out for Delivery',
-        description: 'Your order is on the way',
+        status: "delivered",
+        title: "Out for Delivery",
+        description: "Your order is on the way",
         time: new Date(createdAt.getTime() + 25 * 60000),
-        completed: true
+        completed: true,
       },
       {
-        status: 'completed',
-        title: 'Delivered',
-        description: 'Your order has been delivered',
+        status: "completed",
+        title: "Delivered",
+        description: "Your order has been delivered",
         time: completedTime,
-        completed: true
-      }
+        completed: true,
+      },
     );
-  } else if (status === 'cancelled') {
-    timeline.push(
-      {
-        status: 'cancelled',
-        title: 'Order Cancelled',
-        description: 'Your order has been cancelled',
-        time: new Date(order.updatedAt),
-        completed: true
-      }
-    );
+  } else if (status === "cancelled") {
+    timeline.push({
+      status: "cancelled",
+      title: "Order Cancelled",
+      description: "Your order has been cancelled",
+      time: new Date(order.updatedAt),
+      completed: true,
+    });
   }
 
   return {
     timeline,
     currentStatus: status,
-    estimatedPreparationTime: 25, // minutes
-    deliveryTime: 45, // minutes
+    estimatedPreparationTime: 25,
+    deliveryTime: 45,
     isDelayed: false,
-    riderInfo: status === 'preparing' || status === 'completed' ? {
-      name: 'John Doe',
-      phone: '+1234567890',
-      vehicle: 'Motorcycle',
-      rating: 4.8
-    } : null
+    riderInfo:
+      status === "preparing" || status === "completed"
+        ? {
+            name: "John Doe",
+            phone: "+1234567890",
+            vehicle: "Motorcycle",
+            rating: 4.8,
+          }
+        : null,
   };
 }
 
 // Helper function for status text
 function getStatusText(status) {
   const statusMap = {
-    'pending': 'Order Placed',
-    'preparing': 'Preparing Your Order',
-    'completed': 'Delivered',
-    'cancelled': 'Cancelled'
+    pending: "Order Placed",
+    preparing: "Preparing Your Order",
+    completed: "Delivered",
+    cancelled: "Cancelled",
   };
-  return statusMap[status] || 'Processing';
+  return statusMap[status] || "Processing";
 }
 
 // Helper function for estimated delivery
 function getEstimatedDelivery(createdAt, status) {
   const orderTime = new Date(createdAt);
-  const deliveryTime = new Date(orderTime.getTime() + 45 * 60000); // 45 minutes
-  
-  if (status === 'completed') {
+  const deliveryTime = new Date(orderTime.getTime() + 45 * 60000);
+
+  if (status === "completed") {
     return {
       estimated: deliveryTime,
       isDelivered: true,
-      deliveredAt: new Date(orderTime.getTime() + 40 * 60000) // Assume delivered in 40 mins
+      deliveredAt: new Date(orderTime.getTime() + 40 * 60000),
     };
   }
-  
+
   return {
     estimated: deliveryTime,
     isDelivered: false,
-    timeRemaining: Math.max(0, Math.floor((deliveryTime - new Date()) / 60000))
+    timeRemaining: Math.max(0, Math.floor((deliveryTime - new Date()) / 60000)),
   };
 }

@@ -12,6 +12,11 @@ const menuItemController = {
         filter.categories = req.query.category;
       }
 
+      // Add this: Filter for top deals
+      if (req.query.isTopDeal !== undefined) {
+        filter.isTopDeal = req.query.isTopDeal === "true";
+      }
+
       if (req.query.isAvailable !== undefined)
         filter.isAvailable = req.query.isAvailable === "true";
       if (req.query.search) {
@@ -22,7 +27,7 @@ const menuItemController = {
       }
 
       const menuItems = await MenuItem.find(filter)
-        .populate("categories", "name slug") // Changed to populate categories array
+        .populate("categories", "name slug")
         .sort({ createdAt: -1 });
       res.json(menuItems);
     } catch (error) {

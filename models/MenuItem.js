@@ -8,13 +8,13 @@ const menuItemSchema = new mongoose.Schema(
     image: { type: String }, // URL or path
     categories: [
       {
-        // Changed from category to categories (array)
         type: mongoose.Schema.Types.ObjectId,
         ref: "Category",
         required: true,
       },
     ],
     isAvailable: { type: Boolean, default: true },
+    isTopDeal: { type: Boolean, default: false }, // Add this line
   },
   { timestamps: true },
 );
