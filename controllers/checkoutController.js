@@ -2,10 +2,7 @@ const Order = require("../models/Order");
 const User = require("../models/User");
 const MenuItem = require("../models/MenuItem");
 const Stripe = require("stripe");
-const stripe = Stripe(
-  process.env.STRIPE_SECRET_KEY ||
-    "***REMOVED***",
-);
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 /**
  * Create Stripe Checkout Session - OPTIMIZED
